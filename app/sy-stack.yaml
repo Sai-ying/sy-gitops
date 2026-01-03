@@ -1,0 +1,187 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sy-mongo
+  namespace: sy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sy-mongo
+  template:
+    metadata:
+      labels:
+        app: sy-mongo
+    spec:
+      containers:
+      - name: sy-mongo
+        image: mongo:7
+        ports:
+        - containerPort: 27017
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: sy-mongo-secret
+              key: username
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sy-mongo-secret
+              key: password
+        volumeMounts:
+        - name: mongo-data
+          mountPath: /data/db
+      volumes:
+      # For kind/dev: hostPath persists in the node container.
+      - name: mongo-data
+        hostPath:
+          path: /data/sy-mongo
+          type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sy-mongo
+  namespace: sy
+spec:
+  selector:
+    app: sy-mongo
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sy-api
+  namespace: sy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sy-api
+  template:
+    metadata:
+      labels:
+        app: sy-api
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: sy-api
+      containers:
+      - name: sy-api
+        image: sy-api:1.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DEFAULT_NAME
+          value: "Sai Ying Keung"
+        - name: MONGO_DB
+          value: "sydb"
+        - name: MONGO_COLLECTION
+          value: "profile"
+        - name: MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: sy-mongo-uri
+              key: uri
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 8000
+          initialDelaySeconds: 3
+          periodSeconds: 5
+
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sy-api
+  namespace: sy
+spec:
+  selector:
+    app: sy-api
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sy-frontend
+  namespace: sy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sy-frontend
+  template:
+    metadata:
+      labels:
+        app: sy-frontend
+    spec:
+      containers:
+      - name: sy-frontend
+        image: sy-frontend:1.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sy-frontend
+  namespace: sy
+spec:
+  selector:
+    app: sy-frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sy-ingress
+  namespace: sy
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: sy-api
+            port:
+              number: 8000
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: sy-frontend
+            port:
+              number: 80
