@@ -143,7 +143,7 @@ spec:
     spec:
       containers:
       - name: sy-frontend
-        image: sy-frontend:1.0
+        image: sy-frontend:1.2
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
